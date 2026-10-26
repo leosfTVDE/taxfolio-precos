@@ -1,0 +1,5 @@
+{
+  "name": "taxfolio-pr",
+  "main": "cloudflare-worker.js",
+  "compatibility_date": "2025-09-01"
+}
