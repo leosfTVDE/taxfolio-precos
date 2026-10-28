@@ -42,6 +42,9 @@ export default {
               currency: m.currency,
               time: m.regularMarketTime,
               prevClose: m.chartPreviousClose != null ? m.chartPreviousClose : m.previousClose,
+              // fecho da sessão anterior (para a variação do dia)
+              prev: (() => { const c = ((r.indicators && r.indicators.quote && r.indicators.quote[0] && r.indicators.quote[0].close) || []).filter(v => v != null);
+                return c.length >= 2 ? c[c.length - 2] : (m.previousClose != null ? m.previousClose : null); })(),
               exchange: m.exchangeName,
               name: m.longName || m.shortName || ''
             } : null;
