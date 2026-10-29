@@ -1,6 +1,6 @@
 // TaxFolio – servidor de preços (Cloudflare Worker)
 // Cole este código no editor do Worker e carregue em "Deploy".
-// Rotas:  /quote?symbols=AAPL,SEC0.DE,IBZL.AS   /history?symbol=VWCE.DE&range=5y   /dividends?symbol=AAPL
+// Rotas:  /quote?symbols=AAPL,SEC0.DE,IBZL.AS   /history?symbol=VWCE.DE&range=5y   /dividends?symbol=AAPL   /inflation?geo=PT
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -24,12 +24,44 @@ async function yahoo(symbol, range, interval, events) {
   return (j && j.chart && j.chart.result && j.chart.result[0]) || null;
 }
 
+
+// Inflação oficial (Eurostat, IHPC mensal, ECOICOP ver.2): devolve [["AAAA-MM-15", índice], ...]
+function parseHicp(j) {
+  if (!j || !j.id || !j.dimension || !j.value) return [];
+  const ids = j.id, size = j.size, dim = j.dimension;
+  const asMap = idx => Array.isArray(idx) ? Object.fromEntries(idx.map((c, i) => [c, i])) : idx;
+  const units = asMap(dim.unit.category.index), times = asMap(dim.time.category.index);
+  const unit = ['I25', 'I15', 'I05'].find(u => u in units) || Object.keys(units).find(u => /^I\d\d$/.test(u));
+  if (!unit) return [];
+  const strides = []; let s = 1;
+  for (let k = ids.length - 1; k >= 0; k--) { strides[k] = s; s *= size[k]; }
+  const out = [];
+  for (const [t, ti] of Object.entries(times)) {
+    let flat = 0;
+    ids.forEach((d, k) => { flat += (d === 'time' ? ti : d === 'unit' ? units[unit] : 0) * strides[k]; });
+    const v = j.value[flat] ?? j.value[String(flat)];
+    const m = String(t).match(/^(\d{4})-?M?(\d{2})$/);
+    if (v != null && m) out.push([`${m[1]}-${m[2]}-15`, v]);
+  }
+  return out.sort((a, b) => a[0].localeCompare(b[0]));
+}
+
 export default {
   async fetch(request) {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
     try {
+      if (url.pathname === '/inflation') {
+        const geo = (url.searchParams.get('geo') || 'PT').toUpperCase();
+        if (!/^[A-Z0-9_]{2,12}$/.test(geo)) return json({ error: 'País inválido' }, 400);
+        const src = `https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/prc_hicp_minr?format=JSON&lang=EN&geo=${geo}&coicop18=TOTAL&sinceTimePeriod=2015-01`;
+        const r = await fetch(src, { headers: { Accept: 'application/json' }, cf: { cacheTtl: 43200, cacheEverything: true } });
+        if (!r.ok) return json({ error: 'Eurostat ' + r.status }, 502);
+        const pts = parseHicp(await r.json());
+        if (!pts.length) return json({ error: 'Sem dados para ' + geo }, 404);
+        return json({ geo, source: 'Eurostat (prc_hicp_minr)', last: pts[pts.length - 1][0].slice(0, 7), pts }, 200, 43200);
+      }
       if (url.pathname === '/quote') {
         const symbols = (url.searchParams.get('symbols') || '').split(',').map(s => s.trim()).filter(VALID).slice(0, 50);
         const out = {};
