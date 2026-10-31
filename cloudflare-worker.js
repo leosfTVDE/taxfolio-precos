@@ -1,6 +1,6 @@
 // TaxFolio – servidor de preços (Cloudflare Worker)
 // Cole este código no editor do Worker e carregue em "Deploy".
-// Rotas:  /quote?symbols=AAPL,SEC0.DE,IBZL.AS   /history?symbol=VWCE.DE&range=5y   /dividends?symbol=AAPL   /inflation?geo=PT
+// Rotas:  /quote?symbols=AAPL,SEC0.DE,IBZL.AS   /history?symbol=VWCE.DE&range=5y   /dividends?symbol=AAPL   /inflation?geo=PT   /bce
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -61,6 +61,24 @@ export default {
         const pts = parseHicp(await r.json());
         if (!pts.length) return json({ error: 'Sem dados para ' + geo }, 404);
         return json({ geo, source: 'Eurostat (prc_hicp_minr)', last: pts[pts.length - 1][0].slice(0, 7), pts }, 200, 43200);
+      }
+      if (url.pathname === '/bce') {
+        // Taxa de depósito do BCE (dados oficiais do BCE) e câmbio oficial euro/dólar
+        const start = new Date(Date.now() - 800 * 864e5).toISOString().slice(0, 10), out = {};
+        const opt = { headers: { Accept: 'application/json' }, cf: { cacheTtl: 21600, cacheEverything: true } };
+        try {
+          const r = await fetch(`https://data-api.ecb.europa.eu/service/data/FM/D.U2.EUR.4F.KR.DFR.LEV?startPeriod=${start}&format=jsondata&detail=dataonly`, opt);
+          if (r.ok) {
+            const j = await r.json(), ser = Object.values(j.dataSets[0].series)[0].observations;
+            const dates = j.structure.dimensions.observation[0].values.map(v => v.id);
+            const obs = Object.entries(ser).map(([k, v]) => [dates[+k], v[0]]).filter(x => x[0] && x[1] != null).sort((a, b) => a[0].localeCompare(b[0]));
+            if (obs.length) { const last = obs[obs.length - 1]; let since = last[0]; for (let i = obs.length - 1; i >= 0 && obs[i][1] === last[1]; i--) since = obs[i][0]; out.dfr = { rate: last[1], since, date: last[0] }; }
+          }
+        } catch (e) {}
+        for (const u of ['https://api.frankfurter.dev/v1/latest?base=EUR&symbols=USD', 'https://api.frankfurter.app/latest?from=EUR&to=USD']) {
+          try { const r = await fetch(u, { cf: { cacheTtl: 3600, cacheEverything: true } }); if (r.ok) { const j = await r.json(); if (j.rates && j.rates.USD) { out.fx = { usd: j.rates.USD, date: j.date }; break; } } } catch (e) {}
+        }
+        return json(out, 200, 3600);
       }
       if (url.pathname === '/quote') {
         const symbols = (url.searchParams.get('symbols') || '').split(',').map(s => s.trim()).filter(VALID).slice(0, 50);
