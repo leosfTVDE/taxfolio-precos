@@ -93,8 +93,15 @@ export default {
               time: m.regularMarketTime,
               prevClose: m.chartPreviousClose != null ? m.chartPreviousClose : m.previousClose,
               // fecho da sessão anterior (para a variação do dia)
-              prev: (() => { const c = ((r.indicators && r.indicators.quote && r.indicators.quote[0] && r.indicators.quote[0].close) || []).filter(v => v != null);
-                return c.length >= 2 ? c[c.length - 2] : (m.previousClose != null ? m.previousClose : null); })(),
+              prev: (() => {
+                // Fecho da última sessão ANTERIOR ao dia da cotação atual (confirmado pela data de cada barra)
+                const ts = r.timestamp || [], cl = (r.indicators && r.indicators.quote && r.indicators.quote[0] && r.indicators.quote[0].close) || [], off = m.gmtoffset || 0;
+                const day = t => new Date((t + off) * 1000).toISOString().slice(0, 10);
+                const bars = ts.map((t, i) => [t, cl[i]]).filter(b => b[1] != null);
+                const ref = m.regularMarketTime || (bars.length ? bars[bars.length - 1][0] : null);
+                const before = ref ? bars.filter(b => day(b[0]) < day(ref)) : [];
+                return before.length ? before[before.length - 1][1] : (m.previousClose != null ? m.previousClose : null);
+              })(),
               exchange: m.exchangeName,
               name: m.longName || m.shortName || ''
             } : null;
