@@ -1,6 +1,6 @@
 // TaxFolio – servidor de preços (Cloudflare Worker)
 // Cole este código no editor do Worker e carregue em "Deploy".
-// Rotas:  /quote?symbols=AAPL,SEC0.DE,IBZL.AS   /history?symbol=VWCE.DE&range=5y   /dividends?symbol=AAPL   /inflation?geo=PT   /bce
+// Rotas:  /quote?symbols=AAPL,SEC0.DE,IBZL.AS   /history?symbol=VWCE.DE&range=5y   /dividends?symbol=AAPL   /inflation?geo=PT   /bce   /euribor
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -61,6 +61,17 @@ export default {
         const pts = parseHicp(await r.json());
         if (!pts.length) return json({ error: 'Sem dados para ' + geo }, 404);
         return json({ geo, source: 'Eurostat (prc_hicp_minr)', last: pts[pts.length - 1][0].slice(0, 7), pts }, 200, 43200);
+      }
+      if (url.pathname === '/euribor') {
+        // Euribor a 3 meses, média mensal (dados oficiais do BCE), para comparar a carteira com o "dinheiro sem risco"
+        const start = new Date(Date.now() - 12 * 365 * 864e5).toISOString().slice(0, 7);
+        try {
+          const r = await fetch(`https://data-api.ecb.europa.eu/service/data/FM/M.U2.EUR.RT.MM.EURIBOR3MD_.HSTA?startPeriod=${start}&format=jsondata&detail=dataonly`, { headers: { Accept: 'application/json' }, cf: { cacheTtl: 43200, cacheEverything: true } });
+          if (!r.ok) return json({ error: 'ecb ' + r.status }, 502, 300);
+          const j = await r.json(), ser = Object.values(j.dataSets[0].series)[0].observations, months = j.structure.dimensions.observation[0].values.map(v => v.id);
+          const pts = Object.entries(ser).map(([k, v]) => [months[+k], v[0]]).filter(p => p[0] && p[1] != null).sort((a, b) => a[0].localeCompare(b[0]));
+          return json({ pts }, 200, 43200);
+        } catch (e) { return json({ error: 'euribor' }, 502, 300); }
       }
       if (url.pathname === '/bce') {
         // Taxa de depósito do BCE (dados oficiais do BCE) e câmbio oficial euro/dólar
